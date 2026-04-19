@@ -1,5 +1,16 @@
 # Banking Transactions Lakehouse (Selected Dataset Edition)
 
+## Business Problem & Solution
+
+In many banking systems, data is stored in different places — transactions in one system, customer details in another, and account information somewhere else.  
+Because of this, it becomes difficult to analyze data and understand insights like top customers or money flow. This leads to slow and sometimes inaccurate decision-making.
+
+To solve this, we built a data pipeline using lakehouse architecture.  
+We bring all the data into one place, store it in the Bronze layer, clean and structure it in the Silver layer, and finally generate business insights in the Gold layer.  
+This helps convert raw scattered data into structured information that supports better and faster decision-making.
+
+---
+
 This repository implements a **medallion (Bronze → Silver → Gold)** lakehouse for a **selected banking transactions dataset**. Data is processed with **Apache Spark (PySpark)** on **Databricks**, persisted as **Delta Lake** under a Unity Catalog **volume** layout (`bronze/`, `delta/bronze|silver|gold/`, `schemas/`). Consumption-layer SQL in `sql/SQL_queries.sql` targets the **Gold** Delta tables.
 
 Repository: [Siddhardha2330/Banking-Transactions-Lakehouse-Project-Selected-Dataset-Edition](https://github.com/Siddhardha2330/Banking-Transactions-Lakehouse-Project-Selected-Dataset-Edition)
@@ -125,28 +136,26 @@ One row per account, from Silver `accounts`:
 
 ### Gold
 
-Gold tables align with the **same business entities** as Silver (`transactions`, `accounts`, `customers`, `branches`, `cards`) and are what `sql/SQL_queries.sql` references for joins and KPI-style aggregations (e.g. `transaction_date`, `amount`, `transaction_type`, `balance` on facts; `latest_balance`, `account_type` on accounts; `customer_name`, `city` on customers; `branch_name`, `city` on branches; `card_type` on cards).
+Gold tables align with the **same business entities** as Silver (`transactions`, `accounts`, `customers`, `branches`, `cards`) and are what `sql/SQL_queries.sql` references for joins and KPI-style aggregations.
 
 **Relationship summary (Gold / SQL join model):**  
-`transactions.account_id` → `accounts.account_id`; `accounts.account_id` → `customers.account_id`; `accounts.branch_id` → `branches.branch_id`; `cards.account_id` → `accounts.account_id` (left join where card may not apply to every analytic).
+`transactions.account_id` → `accounts.account_id`;  
+`accounts.account_id` → `customers.account_id`;  
+`accounts.branch_id` → `branches.branch_id`;  
+`cards.account_id` → `accounts.account_id`.
 
 ## Repository structure
 
 | Path | Description |
 |------|-------------|
-| `notebooks/bronze/bronze_load.ipynb` | Batch Bronze load: CSV read, column cleanup, Delta write to `delta/bronze/transactions`. |
-| `notebooks/silver/silver_transform.ipynb` | Silver **fact** pipeline: Bronze → typed amounts, `transaction_type`, dates, validation, `delta/silver/transactions`. |
-| `notebooks/silver/accounts.ipynb` | Silver **accounts** dimension from transaction history + synthetic branch assignment. |
-| `notebooks/silver/branches.ipynb` | Silver **branches** reference data. |
-| `notebooks/silver/cards.ipynb` | Silver **cards** dimension tied to accounts. |
-| `notebooks/silver/customers.ipynb` | Silver **customers** dimension tied to accounts. |
-| `notebooks/silver/README.md` | Minimal placeholder in folder. |
-| `notebooks/gold/gold_transform.ipynb` | Gold layer: curated Delta tables for downstream use. |
-| `notebooks/mast.ipynb` | High-level orchestration across Bronze, Silver transform, and Gold notebooks. |
-| `notebooks/pipeline_files/bronze_transactions.py` | Declarative Bronze **table** definition: Auto Loader (`cloudFiles`) from `bank.csv`, schema location under `schemas/bronze`, column sanitization; intended for DLT / Spark pipelines style workloads. |
-| `notebooks/pipeline_files/silver_transactions.py` | Empty file: placeholder for a Silver pipeline module mirroring the Bronze pattern. |
-| `sql/SQL_queries.sql` | Analytical SQL: wide join across Gold tables, KPI templates, time / branch / card breakdowns. |
-| `docs/` | Written project material, including *Banking Transactions Lakehouse Project Guide (3).pdf*. |
-| `screenshots/` | Evidence of layers and analytics: Bronze layer, Silver table samples, KPIs, business aggregations, ranking/running totals, final report table, **Dashboard Analytics** (images 1–7 plus `Dashboard Analytics 8.jpeg`). |
-
-Together, the folders separate **executable pipelines** (`notebooks/`), **reusable pipeline modules** (`notebooks/pipeline_files/`), **declarative analytics** (`sql/`), **narrative documentation** (`docs/`), and **visual proof** (`screenshots/`) of the lakehouse behavior on the selected dataset.
+| `notebooks/bronze/bronze_load.ipynb` | Batch Bronze load |
+| `notebooks/silver/silver_transform.ipynb` | Silver fact pipeline |
+| `notebooks/silver/accounts.ipynb` | Accounts dimension |
+| `notebooks/silver/branches.ipynb` | Branch reference |
+| `notebooks/silver/cards.ipynb` | Cards dimension |
+| `notebooks/silver/customers.ipynb` | Customers dimension |
+| `notebooks/gold/gold_transform.ipynb` | Gold layer |
+| `notebooks/mast.ipynb` | Orchestration |
+| `sql/SQL_queries.sql` | Analytics queries |
+| `docs/` | Documentation |
+| `screenshots/` | Visual outputs |
