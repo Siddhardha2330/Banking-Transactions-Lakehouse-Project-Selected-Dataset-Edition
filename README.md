@@ -2,160 +2,68 @@
 
 ## Business Problem & Solution
 
-In many banking systems, data is stored in different places — transactions in one system, customer details in another, and account information somewhere else.  
-Because of this, it becomes difficult to analyze data and understand insights like top customers or money flow. This leads to slow and sometimes inaccurate decision-making.
+In many banking systems, data is stored in different places like transactions, customers, and accounts.  
+This makes it difficult to analyze data and understand insights such as customer behavior or money flow.
 
 To solve this, we built a data pipeline using lakehouse architecture.  
-We bring all the data into one place, store it in the Bronze layer, clean and structure it in the Silver layer, and finally generate business insights in the Gold layer.  
-This helps convert raw scattered data into structured information that supports better and faster decision-making.
+Data is first stored in the Bronze layer, then cleaned and structured in the Silver layer, and finally converted into insights in the Gold layer.  
+This helps in faster analysis and better decision-making.
 
 ---
 
-This repository implements a **medallion (Bronze → Silver → Gold)** lakehouse for a **selected banking transactions dataset**. Data is processed with **Apache Spark (PySpark)** on **Databricks**, persisted as **Delta Lake** under a Unity Catalog **volume** layout (`bronze/`, `delta/bronze|silver|gold/`, `schemas/`). Consumption-layer SQL in `sql/SQL_queries.sql` targets the **Gold** Delta tables.
+This repository implements a **Bronze → Silver → Gold** lakehouse for banking transaction data using **Databricks, PySpark, and Delta Lake**.
 
 Repository: [Siddhardha2330/Banking-Transactions-Lakehouse-Project-Selected-Dataset-Edition](https://github.com/Siddhardha2330/Banking-Transactions-Lakehouse-Project-Selected-Dataset-Edition)
 
 ## Architecture
 
-The design follows a classic **three-layer lakehouse**:
-
-1. **Bronze** — Land the source CSV with minimal transformation: column-name cleanup and Delta persistence (and optionally **Auto Loader** / schema evolution via pipeline code). Bronze preserves the grain of the raw bank statement extract.
-2. **Silver** — Conform the transaction stream (types, dates, amounts, deduplication, quality checks), then derive **dimensions** (accounts, customers, branches, cards) so facts and dimensions share stable keys suitable for joins.
-3. **Gold** — Publish **curated** Delta tables (`transactions`, `accounts`, `customers`, `branches`, `cards`) used for analytics, dashboards, and the join patterns in `sql/SQL_queries.sql`.
-
-**Orchestration** — `notebooks/mast.ipynb` expresses the layer order (Bronze notebook, then `silver_transform`, then `gold_transform`) as a single pipeline story. **Notebooks** under `bronze/`, `silver/`, and `gold/` hold the imperative PySpark logic; **`notebooks/pipeline_files/`** holds a declarative-style module for Bronze using Spark **pipelines** (`@dp.table`) and **cloudFiles** (Auto Loader), with `silver_transactions.py` reserved as a **placeholder** for a matching Silver pipeline definition.
-
-**Analytics** — `sql/SQL_queries.sql` defines a wide **base dataset** joining Gold `transactions` to `accounts`, `customers`, `branches`, and `cards`, plus KPI-style fragments (counts, credit/debit sums, trends by date, branch and card slices). Those queries assume the Gold schemas below.
+- **Bronze** — Stores raw CSV data  
+- **Silver** — Cleans and transforms data into structured tables  
+- **Gold** — Generates insights and reporting tables  
 
 ```mermaid
 flowchart TB
   CSV[bank.csv]
-  B[Bronze transactions Delta]
-  ST[Silver transactions]
-  SA[Silver accounts]
-  BRN[branches.ipynb]
-  SB[Silver branches]
-  SCu[Silver customers]
-  SC[Silver cards]
-  G[Gold Delta tables]
-  CSV --> B
-  B --> ST
-  ST --> SA
-  SA --> SCu
-  SA --> SC
-  BRN --> SB
-  ST --> G
-  SA --> G
-  SB --> G
-  SCu --> G
-  SC --> G
+  B[Bronze]
+  S[Silver Tables]
+  G[Gold Insights]
+
+  CSV --> B --> S --> G
 ```
 
-Branches are **reference data** built in `branches.ipynb` (fixed seed rows), not extracted from the bank CSV. Gold holds the curated entity tables that `sql/SQL_queries.sql` joins for reporting.
+## Storage Layout
 
-## Storage layout (logical)
+| Layer | Path | Purpose |
+|------|------|--------|
+| Bronze | `.../delta/bronze/transactions` | Raw data |
+| Silver | `.../delta/silver/...` | Cleaned tables |
+| Gold | `.../delta/gold/...` | Insights |
 
-Paths in notebooks are rooted at a volume such as  
-`/Volumes/workspace/default/banking-transactions-lakehouse-project-selected-dataset-edition/`.
+## Key Tables
 
-| Area | Typical Delta path | Role |
-|------|-------------------|------|
-| Bronze ingest file | `.../bronze/bank.csv` | Source CSV |
-| Bronze table | `.../delta/bronze/transactions` | Raw-normalized statement rows |
-| Auto Loader schema | `.../schemas/bronze` | Schema inference / evolution location (pipeline variant) |
-| Silver facts | `.../delta/silver/transactions` | Cleaned transaction fact table |
-| Silver dimensions | `.../delta/silver/{accounts,customers,branches,cards}` | Conformed dimensions |
-| Gold | `.../delta/gold/{transactions,accounts,customers,branches,cards}` | Curated tables for BI / SQL |
+### Silver Tables
+- transactions  
+- accounts  
+- customers  
+- branches  
+- cards  
 
-## Schema by layer
+### Gold Tables
+- Aggregated and reporting tables used for dashboards  
 
-### Bronze (`transactions`)
+## Relationships
 
-Mirrors the CSV after header-based load and **column renaming** (spaces and punctuation normalized). Conceptually includes:
+- One account → many transactions  
+- One customer → one account  
+- One account → many cards  
+- One account → one branch  
 
-- **Account_No** → later **Account_No** / `Account_No` (string)  
-- **DATE**, **TRANSACTION DETAILS**, **CHQ.NO.**, **VALUE DATE**  
-- **WITHDRAWAL AMT**, **DEPOSIT AMT**, **BALANCE AMT** (often ingested as string, then cleaned downstream)  
-- Spurious trailing column from the file is dropped in Silver.
-
-### Silver — `transactions`
-
-Produced by `silver_transform.ipynb` from Bronze Delta:
-
-| Column | Meaning |
-|--------|--------|
-| `account_id` | Account identifier (from statement `Account_No`) |
-| `transaction_date` | Parsed `date` |
-| `amount` | Numeric movement (deposit amount if present, else withdrawal) |
-| `transaction_type` | `credit` or `debit` |
-| `balance` | Running balance after the line (numeric) |
-
-Intermediate steps use `transaction_details`, `value_date`, `withdrawal_amount`, `deposit_amount` until the final projection.
-
-### Silver — `accounts`
-
-Built from Silver `transactions` using a **window** (latest row per `account_id`):
-
-| Column | Meaning |
-|--------|--------|
-| `account_id` | Primary key |
-| `latest_balance` | Balance on the latest `transaction_date` |
-| `account_type` | Constant `Savings` in the reference implementation |
-| `branch_id` | `B1`–`B4`, derived from `account_id` (hash bucketing) |
-
-### Silver — `branches`
-
-Small **reference** dimension (explicit schema):
-
-| Column | Meaning |
-|--------|--------|
-| `branch_id` | `B1` … `B4` |
-| `branch_name` | e.g. Main Branch, Central Branch |
-| `city` | e.g. Hyderabad, Mumbai, Delhi, Chennai |
-
-### Silver — `customers`
-
-Derived from Silver `accounts`:
-
-| Column | Meaning |
-|--------|--------|
-| `customer_id` | Same as `account_id` (synthetic 1:1 customer per account) |
-| `account_id` | FK to accounts |
-| `customer_name` | `Customer_<account_id>` |
-| `city` | Synthetic city from hash buckets (Hyderabad, Mumbai, etc.) |
-
-### Silver — `cards`
-
-One row per account, from Silver `accounts`:
-
-| Column | Meaning |
-|--------|--------|
-| `card_id` | `C_` + `account_id` |
-| `account_id` | FK to accounts |
-| `card_type` | `Debit` or `Credit` (randomized in the sample generator) |
-
-### Gold
-
-Gold tables align with the **same business entities** as Silver (`transactions`, `accounts`, `customers`, `branches`, `cards`) and are what `sql/SQL_queries.sql` references for joins and KPI-style aggregations.
-
-**Relationship summary (Gold / SQL join model):**  
-`transactions.account_id` → `accounts.account_id`;  
-`accounts.account_id` → `customers.account_id`;  
-`accounts.branch_id` → `branches.branch_id`;  
-`cards.account_id` → `accounts.account_id`.
-
-## Repository structure
+## Repository Structure
 
 | Path | Description |
 |------|-------------|
-| `notebooks/bronze/bronze_load.ipynb` | Batch Bronze load |
-| `notebooks/silver/silver_transform.ipynb` | Silver fact pipeline |
-| `notebooks/silver/accounts.ipynb` | Accounts dimension |
-| `notebooks/silver/branches.ipynb` | Branch reference |
-| `notebooks/silver/cards.ipynb` | Cards dimension |
-| `notebooks/silver/customers.ipynb` | Customers dimension |
-| `notebooks/gold/gold_transform.ipynb` | Gold layer |
-| `notebooks/mast.ipynb` | Orchestration |
-| `sql/SQL_queries.sql` | Analytics queries |
-| `docs/` | Documentation |
-| `screenshots/` | Visual outputs |
+| `notebooks/bronze/` | Load raw data |
+| `notebooks/silver/` | Transform data |
+| `notebooks/gold/` | Create insights |
+| `sql/` | Queries for analysis |
+| `screenshots/` | Output visuals |
